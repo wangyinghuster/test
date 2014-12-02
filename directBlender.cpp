@@ -222,7 +222,7 @@ void directBlender::adjustForground(vector<Mat> &warpImg,vector<Mat> warpForeMsk
 	foreOut_ = Mat::zeros(outRows,outCols,CV_8UC1);
 	vector<vector<Point2i>> vecNeiPoints;
 	vector<Point2i> neiPoints;
-	vector<int> maskIndex;
+	vector<pair<int, int>> maskIndex;
 	for (int i=0;i<imgNum;i++){
 		foreMasks_.push_back(Mat::zeros(warpForeMsk[i].size(),warpForeMsk[i].type()));
 		warpForeMasks_.push_back(warpForeMsk[i].clone());
@@ -232,29 +232,50 @@ void directBlender::adjustForground(vector<Mat> &warpImg,vector<Mat> warpForeMsk
 		//二值化
 		threshold(warpForeMsk[i],warpForeMsk[i],10.0f,255,0);
 	}
-	for(int i=0;i<imgNum-1;i++){//这里要改?????? 为了测试加的imgNum-1
+	Mat temp;
+	for(int i=0;i<imgNum;i++){
 		vecNeiPoints.clear();
 		neiPoints.clear();
 		maskIndex.clear();
 		Mat& fmsk = warpForeMsk[i];
-		Mat temp = fmsk.clone();
+		temp = fmsk.clone();
+		Mat& seamMask = seamMasks_[i];
 		//寻找跨越边缘的连通域
 		for (int r=0;r<fmsk.rows;++r){
 			unsigned char *tptr=temp.ptr<unsigned char>(r);  //要生成的连通域模板
+			unsigned char *seamMaskRow=seamMask.ptr<unsigned char>(r);
 			for (int c=0;c<fmsk.cols;++c){
-				if ((tptr[c]==0xff)){//(tptr[c]>0&& tptr[c]!=125){ //注意这个地方是不对的 125应该在seammask里判断，先只是测试
+				if (tptr[c]==0xFF && seamMaskRow[c]>0){ //前景 跨过重叠区边界 //125这个标记值似乎没用了之后再删吧     注意这个地方是不对的 125应该在seammask里判断，先只是测试
 					NeighbourSearch(temp,Point2i(c,r),neiPoints);
+					//判断该连通域是否全在 树上较低图像 的重叠区内，即是否全是125
+					int flag = 1;
+					for(int ii=0;ii<neiPoints.size();ii++)
+						if(seamMask.at<unsigned char>(neiPoints[ii].y, neiPoints[ii].x)!=125){
+							flag=0;break;
+						}
+					if(flag){//flag=0说明连通域对应的seamMask里有不是125的值，即不全在重叠区里,flag=1就全在重叠区里，要抹掉
+						for(int ii=0;ii<neiPoints.size();ii++){
+							int y = neiPoints[ii].y;
+							int x = neiPoints[ii].x;
+							foreMasks_[i].at<unsigned char>(y, x) = 1;
+							foreOut_.at<unsigned char>(y+topleft[i].y, x+topleft[i].x)= 1;
+						}
+					}	
 					vector<Point2i> points = neiPoints;
 					vecNeiPoints.push_back(points);
-					if(i==0)
-						maskIndex.push_back(2);
-					else if(i==1)
-						maskIndex.push_back(2);
-					//maskIndex.push_back(255-tptr[c]);//这个地方也不对了
+					maskIndex.push_back(make_pair(i, 255-seamMaskRow[c]));//255-seamMaskRow[c]与图像i对应的图像index,它们共同组成了这个重叠区
 				}
 			}
 		}
 		temp.release();
+	}
+	//寻找树上低的图像中的连通域 对应的 树上高的图像中的连通域
+	for(int k=0;k<vecNeiPoints.size();k++){
+		if(maskIndex[k].first!=2){//判断是否是树上低的
+			//遍历树上高的图像
+		}			
+	}
+
 		for(int k=0;k<vecNeiPoints.size();k++){
 			int index = maskIndex[k]; //与其重叠的图像索引
 			int deltax = topleft[i].x-topleft[index].x;
