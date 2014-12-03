@@ -3,65 +3,68 @@
 #include "opencv2/highgui/highgui.hpp"
 #include <opencv2/opencv.hpp> 
 
-
-static void NeighbourSearch(Mat& src, Point2i floodPoint, vector<Point2i>& neiPoints)
+//查找以floodPoint为种子点，floodPoint处的值为条件的连通域
+//连通域的点集保存在neiPoints里
+//连通域遍历完后，将图像中的连通域区域标记为label
+//注意：label要与floodPoint处的值不同
+static void NeighbourSearch(Mat& src, Point2i floodPoint, vector<Point2i>& neiPoints, int label)
 {
 	int value = src.at<unsigned char>(floodPoint.y, floodPoint.x);
 	int bottom = 0,top=1;
 	Point2i tmp;
 	neiPoints.clear();
 	neiPoints.push_back(floodPoint);
-	src.at<unsigned char>(floodPoint.y, floodPoint.x) = 0;
+	src.at<unsigned char>(floodPoint.y, floodPoint.x) = label;
 	while(bottom!=top){
 		tmp = neiPoints[bottom++];
 		if(tmp.y>0&&src.at<unsigned char>(tmp.y-1, tmp.x)==value){
 			neiPoints.push_back(Point2i(tmp.x,tmp.y-1));
-			src.at<unsigned char>(tmp.y-1, tmp.x) = 0;//访问过
+			src.at<unsigned char>(tmp.y-1, tmp.x) =label;//访问过
 			top++;
 		}
 		if(tmp.y<src.rows-1 && src.at<unsigned char>(tmp.y+1, tmp.x)==value){
 			neiPoints.push_back(Point2i(tmp.x,tmp.y+1));
-			src.at<unsigned char>(tmp.y+1, tmp.x) = 0;//访问过
+			src.at<unsigned char>(tmp.y+1, tmp.x) = label;//访问过
 			top++;
 		}
 		if(tmp.x>0&&src.at<unsigned char>(tmp.y, tmp.x-1)==value){
 			neiPoints.push_back(Point2i(tmp.x-1,tmp.y));
-			src.at<unsigned char>(tmp.y, tmp.x-1) = 0;//访问过
+			src.at<unsigned char>(tmp.y, tmp.x-1) = label;//访问过
 			top++;
 		}
 		if(tmp.x<src.cols-1 && src.at<unsigned char>(tmp.y, tmp.x+1)==value){
 			neiPoints.push_back(Point2i(tmp.x+1,tmp.y));
-			src.at<unsigned char>(tmp.y, tmp.x+1) = 0;//访问过
+			src.at<unsigned char>(tmp.y, tmp.x+1) = label;//访问过
 			top++;
 		}
 		if(tmp.x<src.cols-1 && tmp.y<src.rows-1 && src.at<unsigned char>(tmp.y+1, tmp.x+1)==value){
 			neiPoints.push_back(Point2i(tmp.x+1,tmp.y+1));
-			src.at<unsigned char>(tmp.y+1, tmp.x+1) = 0;//访问过
+			src.at<unsigned char>(tmp.y+1, tmp.x+1) = label;//访问过
 			top++;
 		}
 		if(tmp.x<src.cols-1 && tmp.y<src.rows-1 && src.at<unsigned char>(tmp.y+1, tmp.x+1)==value){
 			neiPoints.push_back(Point2i(tmp.x+1,tmp.y+1));
-			src.at<unsigned char>(tmp.y+1, tmp.x+1) = 0;//访问过
+			src.at<unsigned char>(tmp.y+1, tmp.x+1) = label;//访问过
 			top++;
 		}
 		if(tmp.x<src.cols-1 && tmp.y<src.rows-1 && src.at<unsigned char>(tmp.y+1, tmp.x+1)==value){
 			neiPoints.push_back(Point2i(tmp.x+1,tmp.y+1));
-			src.at<unsigned char>(tmp.y+1, tmp.x+1) = 0;//访问过
+			src.at<unsigned char>(tmp.y+1, tmp.x+1) = label;//访问过
 			top++;
 		}
 		if(tmp.x<src.cols-1 && tmp.y>0 && src.at<unsigned char>(tmp.y-1, tmp.x+1)==value){
 			neiPoints.push_back(Point2i(tmp.x+1,tmp.y-1));
-			src.at<unsigned char>(tmp.y-1, tmp.x+1) = 0;//访问过
+			src.at<unsigned char>(tmp.y-1, tmp.x+1) = label;//访问过
 			top++;
 		}
 		if(tmp.x>0 && tmp.y<src.rows-1 && src.at<unsigned char>(tmp.y+1, tmp.x-1)==value){
 			neiPoints.push_back(Point2i(tmp.x-1,tmp.y+1));
-			src.at<unsigned char>(tmp.y+1, tmp.x-1) = 0;//访问过
+			src.at<unsigned char>(tmp.y+1, tmp.x-1) = label;//访问过
 			top++;
 		}
 		if(tmp.x>0 && tmp.y>0 && src.at<unsigned char>(tmp.y-1, tmp.x-1)==value){
 			neiPoints.push_back(Point2i(tmp.x-1,tmp.y-1));
-			src.at<unsigned char>(tmp.y-1, tmp.x-1) = 0;//访问过
+			src.at<unsigned char>(tmp.y-1, tmp.x-1) = label;//访问过
 			top++;
 		}
 	}
@@ -217,130 +220,176 @@ void directBlender::doBlend(vector<Mat> &warpImg,vector<Point> &topleft,Mat &pan
 void directBlender::adjustForground(vector<Mat> &warpImg,vector<Mat> warpForeMsk,vector<Point> topleft)
 {
 	int imgNum=warpForeMsk.size();
-	foreMasks_.clear();//保留穿过边缘的连通域
+	foreMasks_.clear();//每幅图中需要特殊处理的前景连通域  =1,抹掉 =0保留
 	warpForeMasks_.clear();//保存warpForeMsk供doBlend使用
-	foreOut_ = Mat::zeros(outRows,outCols,CV_8UC1);
-	vector<vector<Point2i>> vecNeiPoints;
+	foreOut_ = Mat::zeros(outRows,outCols,CV_8UC1);//全局需要特殊处理的前景连通域 =1 根据foreMask来处理 =0 不特殊处理
+	vector<vector<Point2i>> vecNeiPoints;//保存穿过重叠区边缘的连通域
 	vector<Point2i> neiPoints;
 	vector<pair<int, int>> maskIndex;
 	for (int i=0;i<imgNum;i++){
 		foreMasks_.push_back(Mat::zeros(warpForeMsk[i].size(),warpForeMsk[i].type()));
-		warpForeMasks_.push_back(warpForeMsk[i].clone());
+		warpForeMasks_.push_back(warpForeMsk[i].clone());//保存原始的背景建模得到的前景mask，以后如果用不到要删掉？？？？
 		if (warpForeMsk[i].size()!=warpImg[i].size()) throw sysException("Different size of warpedImg and warpedImgMask");
 		if (warpForeMsk[i].type()!=CV_8UC1) throw sysException("Type of foreground mask matrix is worng! Should be CV_8UC1!");
 
 		//二值化
 		threshold(warpForeMsk[i],warpForeMsk[i],10.0f,255,0);
 	}
-	Mat temp;
-	for(int i=0;i<imgNum;i++){
-		vecNeiPoints.clear();
-		neiPoints.clear();
-		maskIndex.clear();
+	vecNeiPoints.clear();
+	maskIndex.clear();
+	for(int i=0;i<imgNum;i++){		
+		neiPoints.clear();		
 		Mat& fmsk = warpForeMsk[i];
-		temp = fmsk.clone();
 		Mat& seamMask = seamMasks_[i];
-		//寻找跨越边缘的连通域
+		//寻找跨越重叠区边缘的连通域
 		for (int r=0;r<fmsk.rows;++r){
-			unsigned char *tptr=temp.ptr<unsigned char>(r);  //要生成的连通域模板
+			unsigned char *tptr=fmsk.ptr<unsigned char>(r);  //要生成的连通域模板
 			unsigned char *seamMaskRow=seamMask.ptr<unsigned char>(r);
 			for (int c=0;c<fmsk.cols;++c){
 				if (tptr[c]==0xFF && seamMaskRow[c]>0){ //前景 跨过重叠区边界 //125这个标记值似乎没用了之后再删吧     注意这个地方是不对的 125应该在seammask里判断，先只是测试
-					NeighbourSearch(temp,Point2i(c,r),neiPoints);
+					NeighbourSearch(fmsk,Point2i(c,r),neiPoints,vecNeiPoints.size()+1);
 					//判断该连通域是否全在 树上较低图像 的重叠区内，即是否全是125
-					int flag = 1;
-					for(int ii=0;ii<neiPoints.size();ii++)
-						if(seamMask.at<unsigned char>(neiPoints[ii].y, neiPoints[ii].x)!=125){
-							flag=0;break;
+					int flag = -1;
+					for(int ii=0;ii<neiPoints.size();ii++){
+						int value = seamMask.at<unsigned char>(neiPoints[ii].y, neiPoints[ii].x);
+						if(value>0&&value!=125){
+							flag=255-value;
+							break;
 						}
-					if(flag){//flag=0说明连通域对应的seamMask里有不是125的值，即不全在重叠区里,flag=1就全在重叠区里，要抹掉
+					}
+					if(flag==-1){//flag>0说明连通域对应的seamMask里有不是125的值，即不全在重叠区里,flag=-1就全在重叠区里，要抹掉
 						for(int ii=0;ii<neiPoints.size();ii++){
 							int y = neiPoints[ii].y;
 							int x = neiPoints[ii].x;
-							foreMasks_[i].at<unsigned char>(y, x) = 1;
+							foreMasks_[i].at<unsigned char>(y, x) = 1;//抹掉
 							foreOut_.at<unsigned char>(y+topleft[i].y, x+topleft[i].x)= 1;
 						}
-					}	
-					vector<Point2i> points = neiPoints;
-					vecNeiPoints.push_back(points);
-					maskIndex.push_back(make_pair(i, 255-seamMaskRow[c]));//255-seamMaskRow[c]与图像i对应的图像index,它们共同组成了这个重叠区
+					}
+					else{
+						vector<Point2i> points = neiPoints;
+						vecNeiPoints.push_back(points);
+						if(flag>imgNum)throw sysException("flag");
+						maskIndex.push_back(make_pair(i, flag));//flag与图像i对应的图像index,它们共同组成了这个重叠区
+					}
 				}
 			}
 		}
-		temp.release();
 	}
 	//寻找树上低的图像中的连通域 对应的 树上高的图像中的连通域
 	for(int k=0;k<vecNeiPoints.size();k++){
 		if(maskIndex[k].first!=2){//判断是否是树上低的
-			//遍历树上高的图像
-		}			
-	}
-
-		for(int k=0;k<vecNeiPoints.size();k++){
-			int index = maskIndex[k]; //与其重叠的图像索引
+			int i = maskIndex[k].first;
+			int index = maskIndex[k].second;
+			//在对应图像上的映射
 			int deltax = topleft[i].x-topleft[index].x;
 			int deltay = topleft[i].y-topleft[index].y;
 			vector<Point2i> mapPoints;
-			vector<Point2i> maxOverlap;
+			Mat map = Mat::zeros(warpForeMsk[index].size(),warpForeMsk[index].type());//存储图像i的前景到图像index的映射						
 			mapPoints.clear();
 			int width = warpForeMsk[index].cols,height = warpForeMsk[index].rows;
-
-			//Mat grayTest;
-			//cvtColor(warpImg[i], grayTest, CV_BGR2GRAY);
-			for(int j=0;j<vecNeiPoints[k].size();j++){
-				int y = vecNeiPoints[k][j].y+deltay, x = vecNeiPoints[k][j].x+deltax;
-				if((y>0&&y<height)&&(x>0&&x<width))
+			for(int ii=0;ii<vecNeiPoints[k].size();ii++){
+				int y = vecNeiPoints[k][ii].y+deltay, x = vecNeiPoints[k][ii].x+deltax;
+				if((y>0&&y<height)&&(x>0&&x<width)){
 					mapPoints.push_back(Point2i(x,y));
-				//warpForeMsk[i].at<unsigned char>(vecNeiPoints[k][j].y, vecNeiPoints[k][j].x) =  grayTest.at<unsigned char>(vecNeiPoints[k][j].y, vecNeiPoints[k][j].x);
+					map.at<unsigned char>(y, x) = 255;
+				}
 			}
 			if(mapPoints.size()>0){
-				Mat map = Mat::zeros(warpForeMsk[index].size(),warpForeMsk[index].type());//存储图像i的前景到图像index的映射
-				for(int n=0;n<mapPoints.size();n++){
-					map.at<unsigned char>(mapPoints[n].y, mapPoints[n].x) = 255;
-					foreMasks_[index].at<unsigned char>(mapPoints[n].y, mapPoints[n].x) = 1;//将前景在图像index的映射mask置为1，blend的时候该映射会被抹掉
-				}
-				int overCnt=0;
-				temp = warpForeMsk[index].clone();
-				//在warpForeMsk[index]里以(vecNeiPoints[k][j].y+deltay, vecNeiPoints[k][j].x+deltax)为种子点，寻找连通域
-				//与map重叠最多的连通域认为是 在图像index中与vecNeiPoints[k]对应的连通域				
-				for(int n=0;n<mapPoints.size();n++){
+				//在与之对应的图像中寻找具有重叠点数最多的连通域，且判断连通域是否穿过重叠区边缘
+				int overCnt = 0;
+				int maxOverIndex = -1;
+				vector<Point2i> maxOverlap;
+				Mat temp = warpForeMsk[index].clone();
+				for(int ii=0;ii<mapPoints.size();ii++){
 					int tmpCnt=0;
-					neiPoints.clear();
-					if(temp.at<unsigned char>(mapPoints[n].y, mapPoints[n].x)==0xff)
-						NeighbourSearch(temp, Point2i(mapPoints[n].x,mapPoints[n].y), neiPoints);
-					//neiPoints与map重叠点数
-					for(int m=0;m<neiPoints.size();m++)
-						if(map.at<unsigned char>(neiPoints[m].y, neiPoints[m].x))
-							tmpCnt++;
-					if(tmpCnt>overCnt){
-						overCnt = tmpCnt;
-						maxOverlap.clear();
-						maxOverlap = neiPoints;
-					}				
-				}
-				//看是不是要加一个阈值判断重叠点数，判断图像index中对应的前景区穿过图像index中的重叠边线了吗，来决定
-				for(int n=0;n<vecNeiPoints[k].size();n++){//给foreOut_赋值
-					int y = vecNeiPoints[k][n].y;
-					int x = vecNeiPoints[k][n].x;
-					foreOut_.at<unsigned char>(y+topleft[i].y, x+topleft[i].x)= 1;
-				}
-				for(int n=0;n<maxOverlap.size();n++){
-					int y = maxOverlap[n].y;
-					int x = maxOverlap[n].x;
+					int value = temp.at<unsigned char>(mapPoints[ii].y, mapPoints[ii].x);
+					if(value==0xff){
+						neiPoints.clear();
+						NeighbourSearch(temp, Point2i(mapPoints[ii].x,mapPoints[ii].y), neiPoints,0);
+						//neiPoints与map重叠点数
+						for(int jj=0;jj<neiPoints.size();jj++)
+							if(map.at<unsigned char>(neiPoints[jj].y, neiPoints[jj].x))
+								tmpCnt++;
+						if(tmpCnt>overCnt){
+							overCnt = tmpCnt;
+							maxOverlap.clear();
+							maxOverlap = neiPoints;
+						}
+					}
+					else if(value>0){
+						if(value>maskIndex.size())throw sysException("value");
+						int loc = value-1;						
+						if ((maskIndex[k].first!=maskIndex[loc].second)||(maskIndex[loc].first!=maskIndex[k].second)) throw sysException("maskIndex[k].first!=maskIndex[loc].second");
+						for(int jj=0;jj<vecNeiPoints[loc].size();jj++)
+							if(map.at<unsigned char>(vecNeiPoints[loc][jj].y, vecNeiPoints[loc][jj].x)){
+								tmpCnt++;
+								temp.at<unsigned char>(vecNeiPoints[loc][jj].y, vecNeiPoints[loc][jj].x)=0;
+							}
+						if(tmpCnt>overCnt){
+							overCnt = tmpCnt;
+							maxOverlap.clear();
+							maxOverlap = vecNeiPoints[loc];
+							maxOverIndex = loc;
+						}
+					}
+				 }//end of for(int ii=0
+				 if(overCnt>0){//在对应图像上找到了连通域
+					if(maxOverIndex>0){//对应图像上连通域穿过重叠区边界，保留对应图像上的连通域
+						//将该图像上的前景抹掉
+						for(int ii=0;ii<vecNeiPoints[k].size();ii++){
+							int y = vecNeiPoints[k][ii].y;
+							int x = vecNeiPoints[k][ii].x;
+							foreMasks_[i].at<unsigned char>(y, x) = 1;
+							foreOut_.at<unsigned char>(y+topleft[i].y, x+topleft[i].x)= 1;							
+						}
+						//将对应图像前景设置为特殊处理，且找到对应图像在该图像上的映射
+						int width = warpForeMsk[i].cols,height = warpForeMsk[i].rows;
+						for(int ii=0;ii<maxOverlap.size();ii++){
+							int y = maxOverlap[ii].y;
+							int x = maxOverlap[ii].x;
+							foreOut_.at<unsigned char>(y+topleft[index].y, x+topleft[index].x)= 1;							
+							 y -= deltay;
+							 x -= deltax;
+							if((y>=0&&y<height)&&(x>=0&&x<width)){
+								foreMasks_[i].at<unsigned char>(y, x) = 1;
+								foreOut_.at<unsigned char>(y+topleft[i].y, x+topleft[i].x)= 1;														 
+							}				
+						}
+
+						continue;
+					}
+					else{////对应图像上连通域没有穿过重叠区边界，保留该图像上的连通域（树上较低的）
+						//将对应图像上的连通域抹掉
+						int width = warpForeMsk[i].cols,height = warpForeMsk[i].rows;
+						for(int jj=0;jj<maxOverlap.size();jj++){
+							int y = maxOverlap[jj].y, x= maxOverlap[jj].x;
+							foreMasks_[index].at<unsigned char>(y, x) = 1;
+							foreOut_.at<unsigned char>(y+topleft[index].y,x+topleft[index].x)=1;
+							y -= deltay;
+							x -= deltax;
+							if((y>=0&&y<height)&&(x>=0&&x<width)){
+								foreMasks_[i].at<unsigned char>(y, x) = 0;//防止出现空洞,两幅对应图像都抹掉的话，要恢复一幅														 
+							}
+						}						
+					}
+					
+				 }
+			
+			}//end of if(mapPoints)
+			//在对应图像上没有映射点 和 在对应图像上没找到连通域都这样处理
+			for(int ii=0;ii<vecNeiPoints[k].size();ii++){
+				int y = vecNeiPoints[k][ii].y;
+				int x = vecNeiPoints[k][ii].x;
+				//foreMasks_[i].at<unsigned char>(y, x) = 0;//在该图像上的保留
+				foreOut_.at<unsigned char>(y+topleft[i].y, x+topleft[i].x)= 1;
+			}//end of for(int ii = 0
+			if(mapPoints.size()>0){//在对应图像上的映射抹掉
+				for(int jj=0;jj<mapPoints.size();jj++){
+					int y = mapPoints[jj].y, x= mapPoints[jj].x;
 					foreMasks_[index].at<unsigned char>(y, x) = 1;
-					foreOut_.at<unsigned char>(y+topleft[index].y, x+topleft[index].x)= 1;
+					foreOut_.at<unsigned char>(y+topleft[index].y,x+topleft[index].x)=1;	
 				}
 			}
-			else{
-				//保留树上较低的
-			}	
-			//重叠区的去留
-			//foreMasks_[i]
-
-		}
-		//for(int k=0;k<vecNeiPoints.size();k++)
-		//	for(int j=0;j<vecNeiPoints[k].size();j++)
-		//		fmsk.at<unsigned char>(vecNeiPoints[k][j].y, vecNeiPoints[k][j].x) = 125;	
-	}
-	
+		}//end of if(maskIndex)			
+	}//end of for(int k=0)
 }
